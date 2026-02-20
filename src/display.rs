@@ -3,6 +3,16 @@ use colored::Colorize;
 
 use crate::types::*;
 
+/// Truncate a string to at most `max_chars` characters, appending "..." if truncated.
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let preview: String = s.chars().take(max_chars).collect();
+        format!("{preview}...")
+    }
+}
+
 pub fn format_timestamp(ts: &str) -> String {
     if let Ok(dt) = ts.parse::<DateTime<Utc>>() {
         dt.format("%Y-%m-%d %H:%M:%S UTC").to_string()
@@ -241,13 +251,8 @@ fn print_content_block(block: &ContentBlock) {
             if let Some(ref text) = b.thinking
                 && !text.is_empty()
             {
-                let preview: String = text.chars().take(200).collect();
-                println!(
-                    "  {} {}{}",
-                    "thinking:".dimmed(),
-                    preview.dimmed(),
-                    if text.len() > 200 { "..." } else { "" }
-                );
+                let preview = truncate_str(text, 200);
+                println!("  {} {}", "thinking:".dimmed(), preview.dimmed());
             }
         }
         ContentBlock::Text(b) => {
@@ -263,11 +268,7 @@ fn print_content_block(block: &ContentBlock) {
                 .as_ref()
                 .map(|v| {
                     let s = serde_json::to_string(v).unwrap_or_default();
-                    if s.len() > 120 {
-                        format!("{}...", &s[..120])
-                    } else {
-                        s
-                    }
+                    truncate_str(&s, 120)
                 })
                 .unwrap_or_default();
             println!(
@@ -283,11 +284,7 @@ fn print_content_block(block: &ContentBlock) {
                 .as_ref()
                 .map(|v| {
                     let s = serde_json::to_string(v).unwrap_or_default();
-                    if s.len() > 200 {
-                        format!("{}...", &s[..200])
-                    } else {
-                        s
-                    }
+                    truncate_str(&s, 200)
                 })
                 .unwrap_or_default();
             println!("  {} {}", "tool_result:".yellow(), preview.dimmed());
@@ -304,9 +301,8 @@ fn format_content_block(block: &ContentBlock) -> String {
             if let Some(ref text) = b.thinking
                 && !text.is_empty()
             {
-                let preview: String = text.chars().take(200).collect();
-                let suffix = if text.len() > 200 { "..." } else { "" };
-                lines.push(format!("  thinking: {preview}{suffix}"));
+                let preview = truncate_str(text, 200);
+                lines.push(format!("  thinking: {preview}"));
             }
         }
         ContentBlock::Text(b) => {
@@ -322,11 +318,7 @@ fn format_content_block(block: &ContentBlock) -> String {
                 .as_ref()
                 .map(|v| {
                     let s = serde_json::to_string(v).unwrap_or_default();
-                    if s.len() > 120 {
-                        format!("{}...", &s[..120])
-                    } else {
-                        s
-                    }
+                    truncate_str(&s, 120)
                 })
                 .unwrap_or_default();
             lines.push(format!("  tool_use: {tool} {input_preview}"));
@@ -337,11 +329,7 @@ fn format_content_block(block: &ContentBlock) -> String {
                 .as_ref()
                 .map(|v| {
                     let s = serde_json::to_string(v).unwrap_or_default();
-                    if s.len() > 200 {
-                        format!("{}...", &s[..200])
-                    } else {
-                        s
-                    }
+                    truncate_str(&s, 200)
                 })
                 .unwrap_or_default();
             lines.push(format!("  tool_result: {preview}"));

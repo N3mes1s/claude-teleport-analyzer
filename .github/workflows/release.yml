@@ -44,7 +44,7 @@ jobs:
 
       - name: Install cross (Linux aarch64)
         if: matrix.target == 'aarch64-unknown-linux-musl'
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --tag v0.2.5
 
       - name: Run tests
         if: matrix.target != 'aarch64-unknown-linux-musl'

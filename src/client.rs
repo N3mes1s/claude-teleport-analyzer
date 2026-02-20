@@ -10,9 +10,21 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 const ANTHROPIC_BETA: &str = "ccr-byoc-2025-07-29";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_ERROR_BODY_LEN: usize = 500;
+
+fn truncate_error_body(body: &str) -> &str {
+    if body.len() <= MAX_ERROR_BODY_LEN {
+        body
+    } else {
+        &body[..body.floor_char_boundary(MAX_ERROR_BODY_LEN)]
+    }
+}
 
 pub fn validate_session_id(id: &str) -> Result<()> {
-    if !id.starts_with("session_") || id.len() < 16 {
+    if !id.starts_with("session_")
+        || id.len() < 16
+        || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
         bail!(
             "Invalid session ID format: '{id}'. \
              Expected format: session_01... (e.g. session_01QJaJSUgfY6khmFTzJaMqph)"
@@ -79,7 +91,10 @@ impl ApiClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            bail!("Failed to list sessions: {status} - {body}");
+            bail!(
+                "Failed to list sessions: {status} - {}",
+                truncate_error_body(&body)
+            );
         }
 
         let data: SessionsListResponse = resp
@@ -102,7 +117,10 @@ impl ApiClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            bail!("Session {session_id} not found: {status} - {body}");
+            bail!(
+                "Session {session_id} not found: {status} - {}",
+                truncate_error_body(&body)
+            );
         }
 
         resp.json()
@@ -143,7 +161,10 @@ impl ApiClient {
             if !resp.status().is_success() {
                 let status = resp.status();
                 let body = resp.text().await.unwrap_or_default();
-                bail!("Failed to fetch events for session {session_id}: {status} - {body}");
+                bail!(
+                    "Failed to fetch events for session {session_id}: {status} - {}",
+                    truncate_error_body(&body)
+                );
             }
 
             let page: EventsResponse = resp.json().await.with_context(|| {
@@ -182,7 +203,10 @@ impl ApiClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            bail!("Failed to fetch loglines for session {session_id}: {status} - {body}");
+            bail!(
+                "Failed to fetch loglines for session {session_id}: {status} - {}",
+                truncate_error_body(&body)
+            );
         }
 
         let data: IngressResponse = resp
@@ -284,7 +308,10 @@ async fn fetch_org_uuid(client: &reqwest::Client, token: &str) -> Result<String>
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        bail!("Failed to fetch profile (token may be expired): {status} - {body}");
+        bail!(
+            "Failed to fetch profile (token may be expired): {status} - {}",
+            truncate_error_body(&body)
+        );
     }
 
     let profile: ProfileResponse = resp
@@ -365,7 +392,6 @@ mod tests {
 
         let creds = load_credentials_from_file(&path).unwrap();
         assert_eq!(creds.claude_ai_oauth.access_token, "test_token");
-        assert_eq!(creds.claude_ai_oauth.refresh_token, "test_refresh");
 
         std::fs::remove_dir_all(&dir).unwrap();
     }

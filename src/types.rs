@@ -2,25 +2,37 @@ use serde::{Deserialize, Serialize};
 
 // ── OAuth / Auth ─────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Deserialize)]
 pub struct OAuthCredentials {
     #[serde(rename = "claudeAiOauth")]
     pub claude_ai_oauth: OAuthToken,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+impl std::fmt::Debug for OAuthCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuthCredentials")
+            .field("claude_ai_oauth", &self.claude_ai_oauth)
+            .finish()
+    }
+}
+
+#[derive(Deserialize)]
 pub struct OAuthToken {
     #[serde(rename = "accessToken")]
     pub access_token: String,
-    #[serde(rename = "refreshToken")]
-    pub refresh_token: String,
     #[serde(rename = "expiresAt")]
     pub expires_at: u64,
     pub scopes: Vec<String>,
-    #[serde(rename = "subscriptionType")]
-    pub subscription_type: Option<String>,
-    #[serde(rename = "rateLimitTier")]
-    pub rate_limit_tier: Option<String>,
+}
+
+impl std::fmt::Debug for OAuthToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OAuthToken")
+            .field("access_token", &"[REDACTED]")
+            .field("expires_at", &self.expires_at)
+            .field("scopes", &self.scopes)
+            .finish()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -368,28 +380,39 @@ mod tests {
         });
         let creds: OAuthCredentials = serde_json::from_value(json).unwrap();
         assert_eq!(creds.claude_ai_oauth.access_token, "tok_abc");
-        assert_eq!(creds.claude_ai_oauth.refresh_token, "ref_xyz");
         assert_eq!(creds.claude_ai_oauth.expires_at, 1700000000);
         assert_eq!(creds.claude_ai_oauth.scopes, vec!["read", "write"]);
-        assert_eq!(
-            creds.claude_ai_oauth.subscription_type.as_deref(),
-            Some("pro")
-        );
     }
 
     #[test]
-    fn deserialize_oauth_credentials_optional_fields() {
+    fn deserialize_oauth_credentials_ignores_extra_fields() {
         let json = json!({
             "claudeAiOauth": {
                 "accessToken": "tok",
-                "refreshToken": "ref",
                 "expiresAt": 0,
-                "scopes": []
+                "scopes": [],
+                "refreshToken": "ignored",
+                "subscriptionType": "pro",
+                "rateLimitTier": "tier1"
             }
         });
         let creds: OAuthCredentials = serde_json::from_value(json).unwrap();
-        assert!(creds.claude_ai_oauth.subscription_type.is_none());
-        assert!(creds.claude_ai_oauth.rate_limit_tier.is_none());
+        assert_eq!(creds.claude_ai_oauth.access_token, "tok");
+    }
+
+    #[test]
+    fn oauth_token_debug_redacts_secrets() {
+        let json = json!({
+            "claudeAiOauth": {
+                "accessToken": "super_secret_token",
+                "expiresAt": 9999999999u64,
+                "scopes": ["read"]
+            }
+        });
+        let creds: OAuthCredentials = serde_json::from_value(json).unwrap();
+        let debug_output = format!("{:?}", creds);
+        assert!(!debug_output.contains("super_secret_token"));
+        assert!(debug_output.contains("[REDACTED]"));
     }
 
     // ── ProfileResponse ─────────────────────────────────────────────
