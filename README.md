@@ -187,4 +187,4 @@ Required headers: `Authorization: Bearer <token>`, `x-organization-uuid: <uuid>`
 
 ## License
 
-MIT
+Apache 2.0 -- see [LICENSE](LICENSE).
