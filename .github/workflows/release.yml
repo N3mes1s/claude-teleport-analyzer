@@ -46,6 +46,10 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-musl'
         run: cargo install cross --git https://github.com/cross-rs/cross
 
+      - name: Run tests
+        if: matrix.target != 'aarch64-unknown-linux-musl'
+        run: cargo test
+
       - name: Build (cross)
         if: matrix.target == 'aarch64-unknown-linux-musl'
         run: cross build --release --target ${{ matrix.target }}
@@ -53,6 +57,14 @@ jobs:
       - name: Build (native)
         if: matrix.target != 'aarch64-unknown-linux-musl'
         run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Smoke test (unix)
+        if: runner.os != 'Windows' && matrix.target != 'aarch64-unknown-linux-musl' && matrix.target != 'x86_64-apple-darwin'
+        run: target/${{ matrix.target }}/release/claude-teleport-analyzer --help
+
+      - name: Smoke test (windows)
+        if: runner.os == 'Windows'
+        run: target/${{ matrix.target }}/release/claude-teleport-analyzer.exe --help
 
       - name: Package (unix)
         if: runner.os != 'Windows'
