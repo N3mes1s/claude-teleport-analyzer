@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+
+echo "==> cargo fmt --check"
+cargo fmt --check || {
+    echo "ERROR: formatting check failed. Run 'cargo fmt' to fix."
+    exit 1
+}
+
+echo "==> cargo clippy"
+cargo clippy -- -D warnings || {
+    echo "ERROR: clippy failed. Fix warnings before committing."
+    exit 1
+}
+
+echo "==> cargo test"
+cargo test --quiet || {
+    echo "ERROR: tests failed. Fix them before committing."
+    exit 1
+}
+
+echo "All pre-commit checks passed."
