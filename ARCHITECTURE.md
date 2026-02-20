@@ -20,19 +20,19 @@ graph TD
 ```mermaid
 flowchart TD
     Start[load_credentials] --> IsMac{macOS?}
-    IsMac -->|Yes| Keychain[Keychain<br/>security find-generic-password<br/>-s 'Claude Code-credentials' -w]
-    Keychain -->|Success| Parse1[Parse JSON → OAuthCredentials]
+    IsMac -->|Yes| Keychain["Keychain<br/>security find-generic-password"]
+    Keychain -->|Success| Parse1["Parse JSON → OAuthCredentials"]
     Keychain -->|Fail| File
     IsMac -->|No| File[Credentials File]
-    File --> EnvCheck{CLAUDE_CONFIG_DIR<br/>set?}
-    EnvCheck -->|Yes| Custom["$CLAUDE_CONFIG_DIR/.credentials.json"]
+    File --> EnvCheck{"CLAUDE_CONFIG_DIR set?"}
+    EnvCheck -->|Yes| Custom["CLAUDE_CONFIG_DIR/.credentials.json"]
     EnvCheck -->|No| Default["~/.claude/.credentials.json"]
-    Custom --> Parse2[Parse JSON → OAuthCredentials]
+    Custom --> Parse2["Parse JSON → OAuthCredentials"]
     Default --> Parse2
-    Parse1 --> FetchOrg[GET /api/oauth/profile<br/>→ organization.uuid]
+    Parse1 --> FetchOrg["GET /api/oauth/profile → org UUID"]
     Parse2 --> FetchOrg
-    FetchOrg --> ApiClient[ApiClient<br/>access_token + org_uuid]
-    ApiClient --> Headers[All requests include:<br/>Authorization · x-organization-uuid<br/>anthropic-beta · anthropic-version]
+    FetchOrg --> ApiClient["ApiClient: access_token + org_uuid"]
+    ApiClient --> Headers["All requests include:<br/>Authorization · x-organization-uuid<br/>anthropic-beta · anthropic-version"]
 ```
 
 | Platform | Primary | Fallback |
@@ -49,7 +49,7 @@ flowchart LR
     Parse --> Validate[validate_session_id]
     Validate --> Auth[ApiClient::new<br/>auth + org UUID]
     Auth --> Fetch[API call<br/>sessions / events / loglines]
-    Fetch --> Filter[Filter & transform<br/>date · status · text search]
+    Fetch --> Filter["Filter and transform<br/>date · status · text search"]
     Filter --> Output[Terminal output<br/>colored formatting]
 ```
 
@@ -68,11 +68,11 @@ Six subcommands: `list`, `show`, `read`, `summary`, `loglines`, `export`.
 
 ```mermaid
 flowchart TD
-    Start[get_events] --> Fetch[GET /v1/sessions/{id}/events<br/>?after_id=cursor]
+    Start[get_events] --> Fetch["GET /v1/sessions/:id/events<br/>?after_id=cursor"]
     Fetch --> Append[Append page to Vec]
-    Append --> CheckMax{max_events<br/>reached?}
+    Append --> CheckMax{"max_events reached?"}
     CheckMax -->|Yes| Truncate[Truncate & return]
-    CheckMax -->|No| CheckMore{has_more?}
+    CheckMax -->|No| CheckMore{"has_more?"}
     CheckMore -->|Yes| UpdateCursor[cursor = last_id] --> Fetch
     CheckMore -->|No| Return[Return all events]
 ```
