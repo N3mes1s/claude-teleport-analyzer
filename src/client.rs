@@ -193,15 +193,20 @@ impl ApiClient {
     }
 }
 
-/// Returns the path to `.credentials.json`, respecting `CLAUDE_CONFIG_DIR`.
-pub fn credentials_file_path() -> PathBuf {
-    if let Ok(dir) = std::env::var("CLAUDE_CONFIG_DIR") {
+/// Resolves the credentials file path given an optional config dir override.
+fn resolve_credentials_path(config_dir: Option<&str>) -> PathBuf {
+    if let Some(dir) = config_dir {
         return PathBuf::from(dir).join(".credentials.json");
     }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".claude")
         .join(".credentials.json")
+}
+
+/// Returns the path to `.credentials.json`, respecting `CLAUDE_CONFIG_DIR`.
+pub fn credentials_file_path() -> PathBuf {
+    resolve_credentials_path(std::env::var("CLAUDE_CONFIG_DIR").ok().as_deref())
 }
 
 fn load_credentials_from_file(path: &std::path::Path) -> Result<OAuthCredentials> {
@@ -326,36 +331,18 @@ mod tests {
     // ── Credential path resolution ─────────────────────────────────
 
     #[test]
-    fn credentials_file_path_default() {
-        // Temporarily unset CLAUDE_CONFIG_DIR to test default behavior
-        let prev = std::env::var("CLAUDE_CONFIG_DIR").ok();
-        // SAFETY: Only used in tests, acceptable for single-threaded test context.
-        unsafe { std::env::remove_var("CLAUDE_CONFIG_DIR") };
-
-        let path = credentials_file_path();
+    fn credentials_path_default() {
+        let path = resolve_credentials_path(None);
         assert!(path.ends_with(".claude/.credentials.json"));
-
-        if let Some(v) = prev {
-            unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", v) };
-        }
     }
 
     #[test]
-    fn credentials_file_path_with_env_override() {
-        let prev = std::env::var("CLAUDE_CONFIG_DIR").ok();
-        // SAFETY: Only used in tests, acceptable for single-threaded test context.
-        unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", "/tmp/custom-claude-config") };
-
-        let path = credentials_file_path();
+    fn credentials_path_with_override() {
+        let path = resolve_credentials_path(Some("/tmp/custom-claude-config"));
         assert_eq!(
             path,
             PathBuf::from("/tmp/custom-claude-config/.credentials.json")
         );
-
-        match prev {
-            Some(v) => unsafe { std::env::set_var("CLAUDE_CONFIG_DIR", v) },
-            None => unsafe { std::env::remove_var("CLAUDE_CONFIG_DIR") },
-        }
     }
 
     #[test]
