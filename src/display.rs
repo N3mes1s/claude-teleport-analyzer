@@ -381,6 +381,53 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    // ── truncate_str ────────────────────────────────────────────────
+
+    #[test]
+    fn truncate_str_ascii_no_truncation() {
+        assert_eq!(truncate_str("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_str_ascii_exact_boundary() {
+        assert_eq!(truncate_str("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_str_ascii_truncates() {
+        assert_eq!(truncate_str("hello world", 5), "hello...");
+    }
+
+    #[test]
+    fn truncate_str_unicode_box_drawing_no_panic() {
+        // Regression test for issue #1: box-drawing char ─ (U+2500) is 3 bytes in UTF-8.
+        // A naive &s[..120] would panic if index 120 lands inside this char.
+        let s = format!(
+            "{}{}",
+            "a".repeat(119),
+            "─────" // each ─ is 3 bytes (0xE2 0x94 0x80)
+        );
+        // Byte length: 119 + 15 = 134, char count: 119 + 5 = 124
+        let result = truncate_str(&s, 120);
+        assert!(result.ends_with("..."));
+        // Should contain exactly 120 chars + "..."
+        assert_eq!(result.chars().count(), 123); // 120 + 3 for "..."
+    }
+
+    #[test]
+    fn truncate_str_multibyte_emoji() {
+        // Emoji like 🦀 is 4 bytes in UTF-8
+        let s = format!("{}{}", "x".repeat(118), "🦀🦀🦀");
+        let result = truncate_str(&s, 120);
+        assert!(result.ends_with("..."));
+        assert_eq!(result.chars().count(), 123);
+    }
+
+    #[test]
+    fn truncate_str_empty() {
+        assert_eq!(truncate_str("", 10), "");
+    }
+
     // ── format_timestamp ────────────────────────────────────────────
 
     #[test]
@@ -534,6 +581,37 @@ mod tests {
         });
         let output = format_content_block(&block);
         assert!(output.contains("..."));
+    }
+
+    /// Regression test for issue #1: Unicode box-drawing characters in tool_use input
+    /// must not cause a panic during truncation.
+    #[test]
+    fn format_tool_use_block_unicode_box_drawing_no_panic() {
+        let content = format!(
+            "    // ── ALLOWLIST DEFAULT: reject unknown/unclassified syscalls {}\n    //\n    // SECURITY: This is the critical allow",
+            "─".repeat(20)
+        );
+        let block = ContentBlock::ToolUse(ToolUseBlock {
+            id: Some("tu_1".to_string()),
+            name: Some("Edit".to_string()),
+            input: Some(json!({"file_path": "/test.rs", "new_string": content})),
+        });
+        // Must not panic
+        let output = format_content_block(&block);
+        assert!(output.contains("tool_use:"));
+        assert!(output.contains("Edit"));
+    }
+
+    /// Ensure print_content_block (the actual println path) also doesn't panic with Unicode.
+    #[test]
+    fn print_tool_use_unicode_no_panic() {
+        let content = format!("// {}", "─".repeat(100));
+        let block = ContentBlock::ToolUse(ToolUseBlock {
+            id: None,
+            name: Some("Write".to_string()),
+            input: Some(json!({"file_path": "/test.rs", "content": content})),
+        });
+        print_content_block(&block);
     }
 
     #[test]
