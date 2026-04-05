@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use base64::Engine;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -35,19 +36,23 @@ pub fn validate_session_id(id: &str) -> Result<()> {
     Ok(())
 }
 
+/// How the client authenticates to the Anthropic API.
+enum AuthMethod {
+    /// API key via `x-api-key` header (from ANTHROPIC_API_KEY env var).
+    ApiKey(String),
+    /// OAuth Bearer token via `Authorization: Bearer` header.
+    Bearer(String),
+}
+
 pub struct ApiClient {
     client: reqwest::Client,
-    access_token: String,
+    auth: AuthMethod,
     org_uuid: String,
 }
 
 impl ApiClient {
     pub async fn new() -> Result<Self> {
-        let access_token = if let Some(token) = load_token_from_env() {
-            token
-        } else {
-            load_credentials()?.claude_ai_oauth.access_token
-        };
+        let auth = resolve_auth()?;
 
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
@@ -55,21 +60,47 @@ impl ApiClient {
             .build()
             .context("Failed to build HTTP client")?;
 
-        let org_uuid = fetch_org_uuid(&client, &access_token).await?;
+        // Try to get org UUID from proxy JWT env vars first (works in remote
+        // sessions where the OAuth token may lack the user:profile scope),
+        // then fall back to the profile endpoint.
+        let org_uuid = if let Some(uuid) = org_uuid_from_proxy_jwt() {
+            uuid
+        } else {
+            let bearer = match &auth {
+                AuthMethod::ApiKey(_) => None,
+                AuthMethod::Bearer(t) => Some(t.as_str()),
+            };
+            if let Some(token) = bearer {
+                fetch_org_uuid(&client, token).await?
+            } else {
+                bail!(
+                    "Cannot determine organization UUID. \
+                     Set ANTHROPIC_API_KEY or run in an environment \
+                     with proxy JWT or OAuth credentials."
+                );
+            }
+        };
 
         Ok(Self {
             client,
-            access_token,
+            auth,
             org_uuid,
         })
     }
 
     fn headers(&self) -> Result<HeaderMap> {
         let mut headers = HeaderMap::new();
-        headers.insert(
-            AUTHORIZATION,
-            HeaderValue::from_str(&format!("Bearer {}", self.access_token))?,
-        );
+        match &self.auth {
+            AuthMethod::ApiKey(key) => {
+                headers.insert("x-api-key", HeaderValue::from_str(key)?);
+            }
+            AuthMethod::Bearer(token) => {
+                headers.insert(
+                    AUTHORIZATION,
+                    HeaderValue::from_str(&format!("Bearer {token}"))?,
+                );
+            }
+        }
         headers.insert(
             "x-organization-uuid",
             HeaderValue::from_str(&self.org_uuid)?,
@@ -269,15 +300,42 @@ fn load_credentials_from_keychain() -> Result<OAuthCredentials> {
     serde_json::from_str(json_str.trim()).context("Failed to parse credentials JSON from Keychain")
 }
 
+/// Determine the best available authentication method, in priority order:
+/// 1. ANTHROPIC_API_KEY env var (API key auth)
+/// 2. OAuth token from remote session files
+/// 3. OAuth credentials from ~/.claude/.credentials.json or macOS Keychain
+fn resolve_auth() -> Result<AuthMethod> {
+    // 1. API key (highest priority, works everywhere)
+    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        if !key.is_empty() {
+            return Ok(AuthMethod::ApiKey(key));
+        }
+    }
+
+    // 2. Remote session OAuth token
+    if let Some(token) = load_token_from_env() {
+        return Ok(AuthMethod::Bearer(token));
+    }
+
+    // 3. Local credentials file / Keychain
+    let creds = load_credentials()?;
+    Ok(AuthMethod::Bearer(creds.claude_ai_oauth.access_token))
+}
+
 /// Try to read a bare access token from environment sources available in
 /// Claude Code remote sessions.
 fn load_token_from_env() -> Option<String> {
-    // 1. CLAUDE_SESSION_INGRESS_TOKEN_FILE – a file containing the token.
-    if let Ok(path) = std::env::var("CLAUDE_SESSION_INGRESS_TOKEN_FILE") {
-        if let Ok(token) = std::fs::read_to_string(&path) {
-            let token = token.trim().to_string();
-            if !token.is_empty() {
-                return Some(token);
+    // 1. Look for .oauth_token next to the session ingress token file.
+    //    The ingress token path tells us the remote config directory.
+    if let Ok(ingress_path) = std::env::var("CLAUDE_SESSION_INGRESS_TOKEN_FILE") {
+        let ingress = std::path::Path::new(&ingress_path);
+        if let Some(dir) = ingress.parent() {
+            let oauth_path = dir.join(".oauth_token");
+            if let Ok(token) = std::fs::read_to_string(&oauth_path) {
+                let token = token.trim().to_string();
+                if !token.is_empty() {
+                    return Some(token);
+                }
             }
         }
     }
@@ -288,7 +346,6 @@ fn load_token_from_env() -> Option<String> {
         if let Ok(fd) = fd_str.parse::<i32>() {
             use std::io::Read;
             use std::os::unix::io::FromRawFd;
-            // Safety: we dup() so the original fd stays valid for the parent.
             let dup_fd = unsafe { libc::dup(fd) };
             if dup_fd >= 0 {
                 let mut file = unsafe { std::fs::File::from_raw_fd(dup_fd) };
@@ -335,6 +392,33 @@ fn load_credentials() -> Result<OAuthCredentials> {
          Make sure you're logged in with 'claude' first.",
         path.display()
     );
+}
+
+/// Extract the organization UUID from the proxy JWT embedded in HTTPS_PROXY.
+/// The proxy URL format is: http://container_id:jwt_<JWT>@host:port
+fn org_uuid_from_proxy_jwt() -> Option<String> {
+    let proxy_url = std::env::var("HTTPS_PROXY")
+        .or_else(|_| std::env::var("https_proxy"))
+        .ok()?;
+
+    // Extract the JWT from the password field (after "jwt_", before "@")
+    let jwt_start = proxy_url.find("jwt_")? + 4;
+    let jwt_end = proxy_url[jwt_start..].find('@')? + jwt_start;
+    let jwt = &proxy_url[jwt_start..jwt_end];
+
+    // Decode the payload (second segment)
+    let parts: Vec<&str> = jwt.split('.').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let payload_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .ok()?;
+    let payload: serde_json::Value = serde_json::from_slice(&payload_bytes).ok()?;
+    payload
+        .get("organization_uuid")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
 }
 
 async fn fetch_org_uuid(client: &reqwest::Client, token: &str) -> Result<String> {
