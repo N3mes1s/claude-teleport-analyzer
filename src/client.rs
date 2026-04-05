@@ -5,7 +5,9 @@ use std::time::Duration;
 
 use crate::types::*;
 
-const BASE_API_URL: &str = "https://api.anthropic.com";
+fn base_api_url() -> String {
+    std::env::var("ANTHROPIC_BASE_URL").unwrap_or_else(|_| "https://api.anthropic.com".to_string())
+}
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 const ANTHROPIC_BETA: &str = "ccr-byoc-2025-07-29";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -41,8 +43,11 @@ pub struct ApiClient {
 
 impl ApiClient {
     pub async fn new() -> Result<Self> {
-        let creds = load_credentials()?;
-        let access_token = creds.claude_ai_oauth.access_token;
+        let access_token = if let Some(token) = load_token_from_env() {
+            token
+        } else {
+            load_credentials()?.claude_ai_oauth.access_token
+        };
 
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
@@ -79,7 +84,7 @@ impl ApiClient {
     }
 
     pub async fn list_sessions(&self) -> Result<Vec<Session>> {
-        let url = format!("{BASE_API_URL}/v1/sessions");
+        let url = format!("{}/v1/sessions", base_api_url());
         let resp = self
             .client
             .get(&url)
@@ -105,7 +110,7 @@ impl ApiClient {
     }
 
     pub async fn get_session(&self, session_id: &str) -> Result<Session> {
-        let url = format!("{BASE_API_URL}/v1/sessions/{session_id}");
+        let url = format!("{}/v1/sessions/{session_id}", base_api_url());
         let resp = self
             .client
             .get(&url)
@@ -138,7 +143,7 @@ impl ApiClient {
 
         loop {
             let mut url =
-                reqwest::Url::parse(&format!("{BASE_API_URL}/v1/sessions/{session_id}/events"))
+                reqwest::Url::parse(&format!("{}/v1/sessions/{session_id}/events", base_api_url()))
                     .context("Failed to build events URL")?;
 
             if let Some(ref aid) = after_id {
@@ -191,7 +196,7 @@ impl ApiClient {
     }
 
     pub async fn get_loglines(&self, session_id: &str) -> Result<Vec<Logline>> {
-        let url = format!("{BASE_API_URL}/v1/session_ingress/session/{session_id}");
+        let url = format!("{}/v1/session_ingress/session/{session_id}", base_api_url());
         let resp = self
             .client
             .get(&url)
@@ -264,6 +269,43 @@ fn load_credentials_from_keychain() -> Result<OAuthCredentials> {
     serde_json::from_str(json_str.trim()).context("Failed to parse credentials JSON from Keychain")
 }
 
+/// Try to read a bare access token from environment sources available in
+/// Claude Code remote sessions.
+fn load_token_from_env() -> Option<String> {
+    // 1. CLAUDE_SESSION_INGRESS_TOKEN_FILE – a file containing the token.
+    if let Ok(path) = std::env::var("CLAUDE_SESSION_INGRESS_TOKEN_FILE") {
+        if let Ok(token) = std::fs::read_to_string(&path) {
+            let token = token.trim().to_string();
+            if !token.is_empty() {
+                return Some(token);
+            }
+        }
+    }
+
+    // 2. CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR – an inherited fd.
+    #[cfg(unix)]
+    if let Ok(fd_str) = std::env::var("CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR") {
+        if let Ok(fd) = fd_str.parse::<i32>() {
+            use std::io::Read;
+            use std::os::unix::io::FromRawFd;
+            // Safety: we dup() so the original fd stays valid for the parent.
+            let dup_fd = unsafe { libc::dup(fd) };
+            if dup_fd >= 0 {
+                let mut file = unsafe { std::fs::File::from_raw_fd(dup_fd) };
+                let mut buf = String::new();
+                if file.read_to_string(&mut buf).is_ok() {
+                    let token = buf.trim().to_string();
+                    if !token.is_empty() {
+                        return Some(token);
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
 fn load_credentials() -> Result<OAuthCredentials> {
     // On macOS, try Keychain first, then fall back to file.
     #[cfg(target_os = "macos")]
@@ -296,7 +338,7 @@ fn load_credentials() -> Result<OAuthCredentials> {
 }
 
 async fn fetch_org_uuid(client: &reqwest::Client, token: &str) -> Result<String> {
-    let url = format!("{BASE_API_URL}/api/oauth/profile");
+    let url = format!("{}/api/oauth/profile", base_api_url());
     let resp = client
         .get(&url)
         .header(AUTHORIZATION, format!("Bearer {token}"))

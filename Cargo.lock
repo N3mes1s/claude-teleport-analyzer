@@ -218,6 +218,7 @@ dependencies = [
  "clap",
  "colored",
  "dirs",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",
